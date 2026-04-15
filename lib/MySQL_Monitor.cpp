@@ -5101,6 +5101,20 @@ __monitor_run:
 			delete item;
 		}
 	}
+	// Ensure the initial worker pool meets the configured minimum.
+	// Without this, num_threads starts at 2 (set in the constructor) and only scales
+	// up to mysql_thread___monitor_threads_min inside the main loop's config-version
+	// change handler — which never fires if config hasn't changed since startup.
+	// The resulting under-provisioned pool causes all monitor task types (connect,
+	// ping, read-only, galera) to share only 2 blocking worker threads, leading to
+	// queue starvation and spurious health-check timeouts at startup.
+	{
+		unsigned int threads_min = (unsigned int)mysql_thread___monitor_threads_min;
+		if (num_threads < threads_min) {
+			num_threads = threads_min;
+			this->metrics.p_gauge_array[p_mon_gauge::mysql_monitor_workers]->Set(num_threads);
+		}
+	}
 	ConsumerThread<MySQL_Monitor_State_Data> **threads= (ConsumerThread<MySQL_Monitor_State_Data> **)malloc(sizeof(ConsumerThread<MySQL_Monitor_State_Data> *)*num_threads);
 	for (unsigned int i=0;i<num_threads; i++) {
 		threads[i] = new ConsumerThread<MySQL_Monitor_State_Data>(*queue, 0, "MyMonStateData");
